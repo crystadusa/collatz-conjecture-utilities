@@ -1,3 +1,4 @@
 .vscode/
 cargo.lock
+misc/
 target/

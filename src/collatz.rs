@@ -6,20 +6,23 @@ pub struct ProductSum {
     sum: u32,
 }
 
+// Calculates a table of products and correction sums to simulate "search_steps" iterations of the collatz function
 pub fn precompute_constants(search_steps: u64) -> Box<[ProductSum]> {
-    let size = 1 << search_steps;
-    let mut constants = vec![ProductSum{product: 1, sum: 0}; size].into_boxed_slice();
+    // Calculates table size and caps steps at 20 to prevent overflow
     let search_steps = match search_steps {
         0 => return Box::new([ProductSum{product: 1, sum: 0}, ProductSum{product: 3, sum: 1}]),
         steps if steps < 21 => steps,
         _ => 20,
     };
+    let size = 1 << search_steps;
+    let mut constants = vec![ProductSum{product: 1, sum: 0}; size].into_boxed_slice();
 
     let mut i = 1;
     for constant in constants[1..].iter_mut().step_by(2) {
-        let mut search = i as u64;
+        // Iterates collatz function to group times 3 multiplications into one product
+        let mut search = i;
         for _ in 0..search_steps {
-            // if search > (u64::MAX - 1) / 3 { panic!("overflow!!!"); }
+            debug_assert!(search <= (u64::MAX - 1) / 3, "Precomputation overflowed!");
             match search % 2 == 1 {
                 true => {
                     search = (search * 3 + 1) / 2;
@@ -29,8 +32,9 @@ pub fn precompute_constants(search_steps: u64) -> Box<[ProductSum]> {
             }
         }
 
-        let sum = search * (size as u64) - i as u64 * constant.product as u64;
-        // if sum > u32::MAX as u64 { panic!("overflow!!!"); }
+        // Correction sum from the application of the product to a power of two multiple of the result
+        let sum = search * (size as u64) - i * constant.product as u64;
+        debug_assert!(sum <= u32::MAX as u64, "Precomputation overflowed!");
         constant.sum = sum as u32;
         i += 2;
     }
@@ -38,12 +42,12 @@ pub fn precompute_constants(search_steps: u64) -> Box<[ProductSum]> {
     constants
 }
 
+// Returns a table of offsets to the next collatz argument that possibly fails to go below itself
 pub fn precompute_mod_skip(search_steps: u64) -> Box<[u8]> {
     let size = 1 << search_steps;
     let mut mod_skip = vec![0; size / 4].into_boxed_slice();
 
-    // 0 mod 2, 1 mod 4, 3 mod 16, 11 mod 32, 23 mod 32, 7 mod 128, 15 mod 128, 59 mod 128
-    // 39 mod 256, 79 mod 256, 95 mod 256, 123 mod 256, 175 mod 256, 199 mod 256, 219 mod 256
+    // Smaller modular skip tables are recursively calculated as an optimization
     let small_mod_skip = match search_steps {
         ..3 => { return Box::new([4]); },
         ..20 => Box::new([4]),
@@ -57,13 +61,15 @@ pub fn precompute_mod_skip(search_steps: u64) -> Box<[u8]> {
         let mut j = 0;
         let mut search = i;
         let mut lowest_search = i;
+
+        // Four iterations of testing the lowest search at a time
         while j < search_steps & !3 {
             const PRODUCTS: [usize; 16] = [1, 9, 9, 9, 3, 3, 9, 27, 3, 27, 3, 27, 9, 9, 27, 81];
             const SUMS: [usize; 16] = [0, 7, 14, 5, 4, 1, 10, 19, 8, 29, 2, 23, 20, 11, 38, 65];
             const LOW_PRODUCTS: [usize; 16] = [1, 9, 6, 9, 3, 3, 8, 16, 2, 12, 3, 16, 4, 6, 8, 16];
             const LOW_SUMS: [usize; 16] = [0, 7, 4, 5, 4, 1, 0, 0, 0, 4, 2, 0, 0, 2, 0, 0];
 
-            // if search > (usize::MAX - 65) / 81 { panic!("overflow!!!"); }
+            debug_assert!(search <= (usize::MAX - 65) / 81, "Precomputation overflowed!");
             let index = search % 16;
             lowest_search = search * LOW_PRODUCTS[index] + LOW_SUMS[index];
             search = search * PRODUCTS[index] + SUMS[index];
@@ -74,9 +80,10 @@ pub fn precompute_mod_skip(search_steps: u64) -> Box<[u8]> {
             j += 4;
         }
 
+        // Remaining iterations are handled one at a time
         if lowest_search >= i {
             while j < search_steps {
-                // if search > (usize::MAX - 1) / 3 { panic!("overflow!!!"); }
+                debug_assert!(search <= (usize::MAX - 1) / 3, "Precomputation overflowed!");
                 search = match search % 2 {
                     0 => search / 2,
                     _ => (search * 3 + 1) / 2,
@@ -87,12 +94,15 @@ pub fn precompute_mod_skip(search_steps: u64) -> Box<[u8]> {
             }
         }
 
+        // Only 3 (mod 4) numbers are iterated, since only these can possibly go below themselves
+        // Return table stores u8 values, so the highest increment is 252
         let (target, is_target) = match i < low_search + (u8::MAX & !3) as usize {
             true => (i, lowest_search >= i),
             false => (low_search + (u8::MAX & !3) as usize, true)
         };
         
         if is_target {
+            // Return table is filled with values to sum with to reach the next target
             let mut k = low_search;
             for skip in mod_skip[low_search / 4..target / 4].iter_mut() {
                 *skip = (target - k) as u8;
@@ -101,16 +111,21 @@ pub fn precompute_mod_skip(search_steps: u64) -> Box<[u8]> {
             low_search = target;
         }
 
+        // Skips target checks using modular skip table
         i += small_mod_skip[(i / 4) & (small_mod_skip.len() - 1)] as usize;
     }
 
+    // The final value is a special case simpler to handle outside the loop
     mod_skip[size / 4 - 1] = mod_skip[0] + 4;
     mod_skip
 }
 
+// Validates the collatz function goes below itself in a given range
 pub fn compute_range(search_start: u64, search_end: u64, precomputed_constants: std::sync::Arc<Box<[ProductSum]>>, mod_skip: std::sync::Arc<Box<[u8]>>) -> u64 {    
     let constants_mask = precomputed_constants.len() - 1;
     let mod_skip_mask = mod_skip.len() - 1;
+
+    // Rounds up the search start so only 3 (mod 4) numbers are iterated, since only these can possibly go below themselves
     let mut trailing_search = search_start | 3;
     while trailing_search <= search_end {
         let mut current_search = bigint::BigInt{low: trailing_search, high: 0};
@@ -119,6 +134,8 @@ pub fn compute_range(search_start: u64, search_end: u64, precomputed_constants: 
             let prod: u64 = precomputed_constants[index].product.into();
             let sum: u64 = precomputed_constants[index].sum.into();
 
+            // Parity sequence equivalence https://en.wikipedia.org/wiki/Collatz_conjecture#Optimizations
+            // Emulates several collatz iterations at once with precomputed products and sums
             current_search = match current_search.checked_mul(prod) {
                 Some(result) => result,
                 None => { return trailing_search - 1 }
@@ -127,18 +144,23 @@ pub fn compute_range(search_start: u64, search_end: u64, precomputed_constants: 
                 Some(result) => result,
                 None => { return trailing_search - 1 }
             };
+
+            // Removing the trailing zeros iterates the collatz function until an odd state
             current_search = current_search.remove_trailing_zeros();
         }
 
-        const MOD_SKIP_3: [u8; 9] = [0, 0, 1, 0, 1, 1, 0, 0, 1];
-        let temp = trailing_search;
+        // The precomputed mod power of two table skips search values that go below themselves in a specified number of initial iterations
+        // The mod 9 table skips search values that were iterated from a lower search value
+        const MOD_SKIP_3: [bool; 9] = [false, false, true, false, true, true, false, false, true];
+        let search = trailing_search;
         loop {
-            trailing_search = trailing_search.wrapping_add(mod_skip[(trailing_search / 4) as usize & mod_skip_mask] as u64);
-            if MOD_SKIP_3[(trailing_search % 9) as usize] != 0 { continue }
+            trailing_search = trailing_search.wrapping_add(mod_skip[(trailing_search as usize / 4) & mod_skip_mask].into());
+            if MOD_SKIP_3[trailing_search as usize % 9] { continue }
             break
         }
 
-        if trailing_search < temp { return temp }
+        // "search" is used to handle the special case of overflowing trailing_search
+        if trailing_search < search { return search }
     }
 
     search_end

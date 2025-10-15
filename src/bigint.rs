@@ -1,8 +1,10 @@
+// As of now, BigInts are 128 bit integers
 pub struct BigInt {
     pub low: u64,
     pub high: u64,
 }
 
+// Key operations optimized for iterating the collatz function
 impl BigInt {
     pub const fn checked_add(self, rhs: u64) -> Option<Self> {
         let (low, overflow) = self.low.overflowing_add(rhs);
@@ -16,6 +18,7 @@ impl BigInt {
         Some(BigInt{low, high,})
     }
 
+    // Only works when rhs is a valid u32
     pub const fn checked_mul(self, rhs: u64) -> Option<Self> {
         let mut high = match self.high.checked_mul(rhs) {
             Some(result) => result,
@@ -54,6 +57,7 @@ impl BigInt {
     }
 }
 
+// Unused algorithm to multiply two u64s into a low and high u64
 const fn _bigint_mult(mut op1: u64, mut op2: u64) -> (u64, u64) {
     let u1 = op1 & u32::MAX as u64;
     let v1 = op2 & u32::MAX as u64;
