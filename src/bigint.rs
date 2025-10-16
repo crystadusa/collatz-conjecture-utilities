@@ -6,54 +6,50 @@ pub struct BigInt {
 
 // Key operations optimized for iterating the collatz function
 impl BigInt {
-    pub const fn checked_add(self, rhs: u64) -> Option<Self> {
-        let (low, overflow) = self.low.overflowing_add(rhs);
-        let high = match overflow {
-            false => self.high,
-            true => match self.high.checked_add(1) {
-                Some(result) => result,
-                None => return None,
-            }
+    pub const fn checked_add(self, rhs: u32) -> Option<Self> {
+        let (low, is_overflow) = self.low.overflowing_add(rhs as u64);
+        let (high, is_overflow) = match is_overflow {
+            false => (self.high, false),
+            true => self.high.overflowing_add(1)
         };
-        Some(BigInt{low, high,})
+
+        if is_overflow { return None; }
+        Some(BigInt{low, high})
     }
 
-    // Only works when rhs is a valid u32
-    pub const fn checked_mul(self, rhs: u64) -> Option<Self> {
-        let mut high = match self.high.checked_mul(rhs) {
-            Some(result) => result,
-            None => return None,
-        };
-
-        let (low, overflow) = self.low.overflowing_mul(rhs);
-        if overflow {
+    pub const fn checked_mul(self, rhs: u32) -> Option<Self> {
+        let rhs = rhs as u64;
+        let (mut high, is_overflow) = self.high.overflowing_mul(rhs);
+        if is_overflow { return None }
+        
+        let (low, mut is_overflow) = self.low.overflowing_mul(rhs);
+        if is_overflow {
             let u1 = self.low & u32::MAX as u64;
             let k = u1 * rhs >> 32;
             let t = (self.low >> 32) * rhs + k;
             let overflow = t >> 32;
             
-            high = match high.checked_add(overflow) {
-                Some(result) => result,
-                None => return None,
-            }
+            (high, is_overflow) = high.overflowing_add(overflow);
+            if is_overflow { return None }
         };
 
-        Some(BigInt{low, high,})
+        Some(BigInt{low, high})
     }
+}
 
-    pub const fn remove_trailing_zeros(self) -> Self {
+// Operator overloading for BigInt
+impl std::ops::ShrAssign<u32> for BigInt { 
+    // Only works when rhs is greater than 0
+    fn shr_assign(&mut self, rhs: u32) {
         let (mut low, mut high) = (self.low, self.high);
         if low == 0 {
             low = high;
             high = 0;
         }
 
-        let shift = low.trailing_zeros();
-        low >>= shift;
-        low |= (high & ((1u64 << shift) - 1)).wrapping_shl(64 - shift);
-        high >>= shift;
-
-        BigInt{low, high}
+        low >>= rhs;
+        self.low = low | (high & ((1u64 << rhs) - 1)).wrapping_shl(64 - rhs);
+        self.high = high >> rhs;
     }
 }
 
